@@ -58,9 +58,20 @@ def build_html():
         for t in TICKERS:
             pos = l["posiciones"].get(t)
             if pos:
+                precio_actual = precios.get(t)
+                if precio_actual:
+                    pnl_usd = (precio_actual - pos["entry_price"]) * pos["shares"]
+                    pnl_pct = (precio_actual - pos["entry_price"]) / pos["entry_price"] * 100
+                    signo = "+" if pnl_usd >= 0 else ""
+                    pnl_clase = "ganancia" if pnl_usd >= 0 else "perdida"
+                    pnl_str = (" | ahora $" + str(round(precio_actual, 2)) +
+                               " | <span class='" + pnl_clase + "'>" + signo + "$" + str(round(pnl_usd, 2)) +
+                               " (" + signo + str(round(pnl_pct, 2)) + "%)</span>")
+                else:
+                    pnl_str = ""
                 posiciones_html += (
                     "<div class='pos en-pos'>" + t + ": EN_POSICION " +
-                    str(round(pos["shares"], 4)) + " @ $" + str(round(pos["entry_price"], 2)) + "</div>"
+                    str(round(pos["shares"], 4)) + " @ $" + str(round(pos["entry_price"], 2)) + pnl_str + "</div>"
                 )
             else:
                 precio_actual = precios.get(t)
@@ -91,6 +102,8 @@ def build_html():
             ".pos{font-size:13px;padding:4px 0;border-bottom:1px solid #2a2d35;}"
             ".pos-empty{color:#666;font-size:13px;font-style:italic;}"
             ".en-pos{color:#4ade80;}"
+            ".ganancia{color:#4ade80;font-weight:bold;}"
+            ".perdida{color:#f87171;font-weight:bold;}"
             ".esperando{color:#777;}"
             ".wipeout{color:#ff5555;font-weight:bold;font-size:13px;margin-top:6px;}"
             "</style></head><body>"
