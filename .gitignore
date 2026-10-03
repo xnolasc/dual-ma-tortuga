@@ -10,3 +10,6 @@ dualma_cron.log
 venv/
 __pycache__/
 .DS_Store
+ledger_*.json
+dualma_state.json
+dualma_trades.json
