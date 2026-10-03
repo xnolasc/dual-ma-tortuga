@@ -4,3 +4,9 @@ __pycache__/
 dashboard.out.log
 dashboard.err.log
 dualma_trader.log
+dualma_cron.log
+*.log
+.env
+venv/
+__pycache__/
+.DS_Store
