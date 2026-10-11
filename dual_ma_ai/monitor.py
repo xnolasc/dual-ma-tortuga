@@ -218,15 +218,24 @@ def status(root=STATE_ROOT,now=None):
         if info:
             try:schedule_due=bool(info.get('next_daily_refresh') and now>=timestamp(info['next_daily_refresh']))
             except (TypeError,ValueError,DataError):schedule_due=True
+        phase_active=base.get('phase') not in (None,'idle')
+        readiness_refresh=bool(base.get('in_progress') or phase_active)
         for row in base.get('daily',[]):
             if row.get('status')!='VALIDATED':
                 row['signals']=[]
-            elif (not info or base['status'] in ('STOPPED','ERROR') or schedule_due or row.get('candle')!=info['expected_candle'] or
-                  base.get('in_progress') or base.get('phase') not in (None,'idle')):
+            elif not info or base['status']=='STOPPED' or schedule_due or row.get('candle')!=info['expected_candle']:
                 row['status']='STALE';row['signals']=[];row['explanation']='Latest expected completed daily candle or current worker validation unavailable; new decisions blocked.'
+            elif base['status']=='ERROR':
+                row['status']='UNAVAILABLE';row['signals']=[]
+                row['explanation']='Worker validation failed; the last validated candle is retained, but new decisions are blocked.'
+            elif readiness_refresh:
+                # Calendar/data work does not invalidate the last atomically
+                # published candle. Suppress decisions until this stage ends.
+                row['status']='CHECKING';row['signals']=[]
+                row['explanation']='Calendar or data refresh is in progress; the last validated candle is retained, but decisions are temporarily suppressed.'
         if base['status']=='RUNNING' and any(r['status']=='STALE' for r in base.get('daily',[])):base['status']='STALE'
         if base['status']=='RUNNING' and info and info.get('regular_hours') and any(q['status']=='STALE' for q in base.get('quotes',[])):base['status']='STALE'
-        if base.get('in_progress') and base['status'] not in ('STOPPED','ERROR'):
+        if readiness_refresh and base['status'] not in ('STOPPED','ERROR'):
             base['status']='DEGRADED';base['message']='Read-only refresh in progress; decisions are temporarily suppressed.'
         base['connection_health']=values.get('connection_health','UNKNOWN')
         return base
@@ -335,7 +344,11 @@ class Worker:
                     or any(r['status']!='VALIDATED' or r.get('candle')!=info['expected_candle'] for r in daily))
         retry_due=not old.get('last_daily_attempt') or now-timestamp(old['last_daily_attempt'])>=timedelta(seconds=300)
         need_daily=force or old.get('in_progress',False) or old.get('daily_expected')!=info['expected_candle'] or (incomplete and retry_due)
-        self.store.save(dict(running=True,heartbeat=now.isoformat(),schedule=info,next_scheduled_refresh=(now+timedelta(seconds=60)).isoformat()))
+        # Commit the calendar result and end its phase atomically so readers do
+        # not observe new schedule metadata paired with an obsolete phase.
+        self.store.save(dict(running=True,heartbeat=now.isoformat(),schedule=info,
+                             phase='idle',phase_started_at=None,
+                             next_scheduled_refresh=(now+timedelta(seconds=60)).isoformat()))
         if not need_quotes and not need_daily:
             self.store.save(dict(phase='idle'))
             return self.store.read()
@@ -427,7 +440,7 @@ class Worker:
         if was_failed and health=='RUNNING':events.append(event(('recovered',slot),now,'RECOVERY','Market-data service recovered.'))
         if not network_failed and any(r['status']=='VALIDATED' for r in updates.get('daily',[])+updates.get('quotes',[])):
             updates['last_successful_refresh']=self.clock().isoformat()
-        updates.update(heartbeat=self.clock().isoformat(),running=True,in_progress=False,phase='idle',health=health,connection_health='ERROR' if network_failed else 'CONNECTED',message='; '.join(failures) if failures else 'Read-only IEX monitoring; PAPER execution disabled.',next_scheduled_refresh=(self.clock()+timedelta(seconds=60)).isoformat())
+        updates.update(heartbeat=self.clock().isoformat(),running=True,in_progress=False,phase='idle',phase_started_at=None,health=health,connection_health='ERROR' if network_failed else 'CONNECTED',message='; '.join(failures) if failures else 'Read-only IEX monitoring; PAPER execution disabled.',next_scheduled_refresh=(self.clock()+timedelta(seconds=60)).isoformat())
         self.store.save(updates,events);self.logger.info('Read-only refresh %s; validation failures=%d',health,len(failures))
         return self.store.read()
     def fail_phase(self,stage,now):

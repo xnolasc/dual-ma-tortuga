@@ -70,6 +70,8 @@ class AlertEvaluator:
             return 'MONITOR_' + str(status or 'UNKNOWN'), 'Monitor is not in an eligible healthy state.'
         if snapshot.get('in_progress'):
             return 'REFRESH_IN_PROGRESS', 'Monitor refresh is in progress; its data cannot generate alerts.'
+        if snapshot.get('phase') not in (None, 'idle'):
+            return 'MONITOR_PHASE_ACTIVE', 'Monitor calendar or data validation is in progress; alerts are suppressed until atomic publication.'
         expected = (snapshot.get('schedule') or {}).get('expected_candle')
         if not isinstance(expected, str):
             return 'EXPECTED_CANDLE_UNAVAILABLE', 'Expected completed exchange session is unavailable.'

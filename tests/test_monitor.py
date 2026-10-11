@@ -237,6 +237,11 @@ class MonitorTests(unittest.TestCase):
         self.assertEqual(Path(wallet.path).read_bytes(),wallet_before)
 
 class StartupRecoveryTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp=tempfile.TemporaryDirectory();self.root=Path(self.tmp.name);self.store=Store(self.root)
+        self.client=FakeClient();self.now=NOW;self.worker=Worker(self.store,lambda:self.client,lambda:self.now)
+    def tearDown(self):self.tmp.cleanup()
+
     def test_unexpected_nvda_failure_is_atomic_clears_marker_and_recovers(self):
         with tempfile.TemporaryDirectory() as root:
             store=Store(root);now=NOW;client=FakeClient(now)
@@ -317,6 +322,68 @@ class StartupRecoveryTests(unittest.TestCase):
                 self.assertEqual(db.execute("select count(*) from events where kind='ERROR'").fetchone()[0],1)
                 payload=json.loads(db.execute("select payload from events where kind='ERROR'").fetchone()[0])
                 self.assertEqual(payload['exception_class'],'PhaseTimeout');self.assertEqual(payload['stage'],'calendar')
+
+    def test_calendar_timeout_preserves_last_candle_without_false_stale_projection(self):
+        from dual_ma_ai.monitor import PhaseTimeout
+        self.worker.tick();published=self.store.read()['daily'];self.now+=timedelta(minutes=5)
+        interim=[]
+        def timeout_after_observation(now):
+            interim.append(status(self.root,now))
+            raise PhaseTimeout('calendar')
+        with patch('dual_ma_ai.monitor.schedule',side_effect=timeout_after_observation):
+            result=self.worker.tick(force=True)
+        self.assertEqual(interim[0]['status'],'DEGRADED')
+        self.assertTrue(all(r['status']=='CHECKING' and not r['signals'] for r in interim[0]['daily']))
+        self.assertEqual(result['daily'],published)
+        projected=status(self.root,self.now)
+        self.assertEqual(projected['status'],'ERROR')
+        self.assertTrue(all(r['status']=='UNAVAILABLE' and not r['signals'] for r in projected['daily']))
+
+    def test_calendar_recovery_publishes_schedule_and_idle_together(self):
+        from dual_ma_ai.monitor import PhaseTimeout
+        self.worker.tick();self.now+=timedelta(minutes=5)
+        with patch('dual_ma_ai.monitor.schedule',side_effect=PhaseTimeout('calendar')):
+            failed=self.worker.tick(force=True)
+        self.assertEqual(failed['phase'],'calendar')
+        self.client.now=self.now
+        recovered=Worker(self.store,lambda:self.client,lambda:self.now).tick(force=True)
+        self.assertEqual(recovered['health'],'RUNNING')
+        self.assertEqual(recovered['phase'],'idle')
+        self.assertIsNone(recovered.get('phase_started_at'))
+        view=status(self.root,self.now)
+        self.assertEqual(view['status'],'RUNNING')
+        self.assertTrue(all(r['status']=='VALIDATED' for r in view['daily']))
+
+    def test_calendar_phase_concurrent_reads_are_consistently_suppressed(self):
+        self.worker.tick()
+        self.store.save(dict(phase='calendar',phase_started_at=NOW.isoformat(),in_progress=False))
+        failures=[];results=[]
+        def read_many():
+            for _ in range(30):
+                view=status(self.root,NOW)
+                if view['status']!='DEGRADED' or any(r['signals'] or r['status']!='CHECKING' for r in view['daily']):
+                    failures.append(view)
+                results.append(view)
+        threads=[threading.Thread(target=read_many) for _ in range(4)]
+        for thread in threads:thread.start()
+        for thread in threads:thread.join()
+        self.assertEqual(failures,[])
+        self.assertEqual(len(results),120)
+
+    def test_calendar_projection_during_weekends_and_exchange_holiday(self):
+        from dual_ma_ai.monitor import schedule
+        for at in (datetime(2026,10,10,16,tzinfo=UTC),
+                   datetime(2026,10,11,16,tzinfo=UTC),
+                   datetime(2026,11,26,17,tzinfo=UTC)):
+            info=schedule(at)
+            rows=[dict(ticker=t,status='VALIDATED',feed='iex',source='Alpaca Market Data daily bars',
+                       candle=info['expected_candle'],signals=[dict(signal='BUY')]) for t in TICKERS]
+            self.store.save(dict(running=True,heartbeat=at.isoformat(),health='RUNNING',phase='calendar',
+                                 in_progress=False,schedule=info,daily=rows,last_successful_refresh=at.isoformat()))
+            projected=status(self.root,at)
+            self.assertEqual(projected['schedule']['expected_candle'],info['expected_candle'])
+            self.assertEqual(projected['status'],'DEGRADED')
+            self.assertTrue(all(r['status']=='CHECKING' and not r['signals'] for r in projected['daily']))
 
     def test_credentials_deadline_fails_closed_and_recovers(self):
         from dual_ma_ai.monitor import PhaseTimeout

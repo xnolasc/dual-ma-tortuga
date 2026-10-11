@@ -67,6 +67,15 @@ class AlertEvaluatorTests(unittest.TestCase):
         self.assertEqual(result['reason_code'],'REFRESH_IN_PROGRESS')
         self.assertEqual(self.store.list_signals(actionable=True),[])
 
+    def test_calendar_projection_suppresses_alerts_without_relabeling_data_stale(self):
+        data=snapshot(sides={'MU':{PRESETS[0].name:'BUY'}})
+        data['phase']='calendar';data['in_progress']=False
+        result=self.evaluator(data).tick(now=AS_OF)
+        self.assertEqual(result['reason_code'],'MONITOR_PHASE_ACTIVE')
+        self.assertEqual(self.store.list_signals(actionable=True),[])
+        self.assertTrue(any(e['transition']=='SUPPRESSED' and 'MONITOR_PHASE_ACTIVE' in e['payload_json']
+                            for e in self.store.recent_events(limit=200)))
+
     def test_duplicate_strategy_output_is_suppressed(self):
         data=snapshot(sides={'MU':{PRESETS[0].name:'BUY'}})
         data['daily'][6]['signals'].append(dict(data['daily'][6]['signals'][0]))
