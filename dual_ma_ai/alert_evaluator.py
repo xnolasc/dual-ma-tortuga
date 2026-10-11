@@ -28,11 +28,13 @@ class AlertCapacityError(RuntimeError):
 class AlertEvaluator:
     """No broker, wallet or data-fetch capability; state is a separate SQLite file."""
     def __init__(self, alert_store, monitor_root, *, policies=None, source_reader=None,
-                 max_backoff_seconds=30, retry_delays=(1.0, 2.0, 4.0, 8.0, 16.0)):
+                 policy_resolver=None, max_backoff_seconds=30,
+                 retry_delays=(1.0, 2.0, 4.0, 8.0, 16.0)):
         self.store = alert_store if isinstance(alert_store, AlertStore) else AlertStore(alert_store)
         self.monitor_root = monitor_root
         self.policies = policies or PolicySet.load()
         self.source_reader = source_reader or monitor_status
+        self.policy_resolver = policy_resolver
         self.max_backoff_seconds = max_backoff_seconds
         self.retry_delays = tuple(retry_delays[:5])
         self._gate = threading.Lock()
@@ -138,6 +140,15 @@ class AlertEvaluator:
         for ticker in TICKERS:
             row = by_ticker.get(ticker)
             try:
+                if isinstance(row, dict) and 'adjustment_policy' not in row and self.policy_resolver:
+                    # The resolver must independently prove policy provenance. Failure
+                    # leaves the original row untouched and therefore fail-closed.
+                    try:
+                        resolved = self.policy_resolver(row)
+                    except Exception:
+                        resolved = None
+                    if resolved:
+                        row = dict(row, adjustment_policy=resolved)
                 outputs = self._validated_row(row, expected, now)
             except (DataError, KeyError, TypeError, ValueError) as exc:
                 row_status = row.get('status') if isinstance(row, dict) else 'MISSING'

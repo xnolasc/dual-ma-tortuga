@@ -8,6 +8,9 @@ from pathlib import Path
 
 from dual_ma_ai.alert_evaluator import AlertCapacityError, AlertEvaluator
 from dual_ma_ai.alert_store import AlertStore
+from dual_ma_ai.alert_provenance import CachedPolicyResolver
+from dual_ma_ai.market_data import canonical, digest
+from dual_ma_ai.alpaca_data import POLICY, SOURCE
 from dual_ma_ai.strategy import PRESETS
 from alert_helpers import AS_OF, snapshot
 
@@ -79,6 +82,45 @@ class AlertEvaluatorTests(unittest.TestCase):
         self.assertEqual(self.store.list_signals(ticker='MU',actionable=True),[])
         self.assertTrue(any(e['transition']=='SUPPRESSED' and 'adjustment policy' in e['payload_json'].lower()
                             for e in self.store.recent_events(limit=200)))
+
+    def test_missing_policy_is_accepted_only_with_matching_immutable_cache_proof(self):
+        data=snapshot(sides={'CIEN':{PRESETS[2].name:'BUY'}})
+        row=next(row for row in data['daily'] if row['ticker']=='CIEN')
+        row.pop('adjustment_policy')
+        payload={'feed':'iex','ticker':'CIEN','bars':[{'day':row['candle']}]}
+        row['payload_sha256']=digest(payload)
+        history=Path(self.temp.name)/'history';history.mkdir()
+        envelope=dict(format_version=1,source=SOURCE,policy=POLICY,ticker='CIEN',
+            fetched_at='2024-01-03T05:19:00+00:00',payload=payload,validation=row['validation'])
+        (history/f"CIEN-iex-{digest(envelope)}.json").write_bytes(canonical(envelope))
+        evaluator=AlertEvaluator(self.store,Path(self.temp.name)/'monitor',
+            source_reader=lambda _r,_n:data,policy_resolver=CachedPolicyResolver(history))
+        result=evaluator.tick(now=AS_OF)
+        self.assertEqual(result['actionable_created'],1)
+        rows=self.store.list_signals(ticker='CIEN',strategy=PRESETS[2].name,actionable=True)
+        self.assertEqual(len(rows),1)
+        self.assertEqual(rows[0]['decision_state'],'ENTRY_REVIEW')
+
+    def test_missing_policy_without_matching_cache_proof_remains_suppressed(self):
+        data=snapshot(sides={'CIEN':{PRESETS[2].name:'BUY'}})
+        row=next(row for row in data['daily'] if row['ticker']=='CIEN')
+        row.pop('adjustment_policy')
+        resolver=CachedPolicyResolver(Path(self.temp.name)/'missing-history')
+        result=AlertEvaluator(self.store,Path(self.temp.name)/'monitor',
+            source_reader=lambda _r,_n:data,policy_resolver=resolver).tick(now=AS_OF)
+        self.assertEqual(result['actionable_created'],0)
+        self.assertEqual(self.store.list_signals(ticker='CIEN',actionable=True),[])
+
+    def test_policy_resolver_failure_is_audited_as_suppression(self):
+        data=snapshot(sides={'CIEN':{PRESETS[2].name:'BUY'}})
+        next(row for row in data['daily'] if row['ticker']=='CIEN').pop('adjustment_policy')
+        def fail(_row):raise OSError('local cache unavailable')
+        result=AlertEvaluator(self.store,Path(self.temp.name)/'monitor',
+            source_reader=lambda _r,_n:data,policy_resolver=fail).tick(now=AS_OF)
+        self.assertEqual(result['actionable_created'],0)
+        self.assertTrue(any(event['transition']=='SUPPRESSED' and
+            'adjustment policy' in event['payload_json'].lower()
+            for event in self.store.recent_events(limit=200)))
 
     def test_restart_replay_keeps_event_ids_and_count(self):
         data=snapshot(sides={'MU':{PRESETS[2].name:'SELL'}})

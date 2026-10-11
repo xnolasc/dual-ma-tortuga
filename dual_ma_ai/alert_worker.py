@@ -9,6 +9,7 @@ import sys
 import time
 
 from .alert_evaluator import AlertEvaluator
+from .alert_provenance import CachedPolicyResolver
 from .alert_policy import PolicySet
 from .alert_store import AlertStore
 from .monitor import STATE_ROOT
@@ -21,7 +22,8 @@ DEFAULT_ALERT_DB = ALERT_ROOT / 'alerts.sqlite3'
 def run(monitor_root=STATE_ROOT, alert_db=DEFAULT_ALERT_DB, policy=None,
         *, once=False, interval=60, stop=None):
     store = AlertStore(alert_db)
-    evaluator = AlertEvaluator(store, monitor_root, policies=PolicySet.load(policy))
+    evaluator = AlertEvaluator(store, monitor_root, policies=PolicySet.load(policy),
+        policy_resolver=CachedPolicyResolver(Path(monitor_root) / 'history'))
     lock_path = Path(alert_db).with_suffix('.lock')
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     with lock_path.open('a') as lock:
