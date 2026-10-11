@@ -25,6 +25,7 @@ from .strategy import PRESETS, signals_many
 from .alpaca_data import AlpacaCache, CACHE_ROOT as ALPACA_ROOT, SOURCE as ALPACA_SOURCE, daily_ready_at
 from .research import ROOT, CACHE_ROOT, REPORT_ROOT
 from .monitor import status as monitor_status, STATE_ROOT as MONITOR_ROOT
+from .alert_store import AlertStore
 
 LOG = logging.getLogger('dual_ma_ai.dashboard')
 RESEARCH_REQUEST_TIMEOUT_SECONDS = 20
@@ -55,6 +56,7 @@ def _initialize_research_worker():
 
 STATIC = Path(__file__).with_name('static')
 DEFAULT_DB = ROOT / 'data/dual_ma_ai/wallet.sqlite3'
+DEFAULT_ALERT_DB = ROOT / 'data/dual_ma_ai/alerts/alerts.sqlite3'
 
 
 def wallet_view(wallet):
@@ -195,11 +197,12 @@ def _coverage_from_path(alpaca_path,feed):
 
 
 class Dashboard:
-    def __init__(self, wallet, reports=REPORT_ROOT, cache=CACHE_ROOT, alpaca_cache=ALPACA_ROOT, monitor_root=MONITOR_ROOT, read_only=False):
+    def __init__(self, wallet, reports=REPORT_ROOT, cache=CACHE_ROOT, alpaca_cache=ALPACA_ROOT, monitor_root=MONITOR_ROOT, read_only=False, alert_store=None):
         self.wallet, self.reports, self.cache = wallet, Path(reports), HistoryCache(cache)
         self.alpaca = AlpacaCache(alpaca_cache)
         self.monitor_root=Path(monitor_root)
         self.read_only=read_only
+        self.alert_store=alert_store
         self.secret = secrets.token_bytes(32)
         self.csrf = secrets.token_urlsafe(32)
         self._memo_guard = threading.Lock()
@@ -418,6 +421,89 @@ class Dashboard:
         event = getattr(self.wallet, fields['operation'])(fields['amount'], fields['key'])
         return dict(event=event, wallet=wallet_view(self.wallet))
 
+    def alerts_view(self, query):
+        if self.alert_store is None:
+            raise DashboardBusy('Phase 5B alerts are not initialized')
+        allowed={'ticker','strategy','state','actionable','limit'}
+        if set(query)-allowed or any(len(v)!=1 for v in query.values()):
+            raise DataError('Invalid alert filters')
+        ticker=query.get('ticker',[None])[0]
+        strategy=query.get('strategy',[None])[0]
+        state=query.get('state',[None])[0]
+        actionable=query.get('actionable',[None])[0]
+        if ticker is not None and ticker not in TICKERS:
+            raise DataError('Unknown alert ticker')
+        if strategy is not None and strategy not in {s.name for s in PRESETS}:
+            raise DataError('Unknown alert strategy')
+        if state is not None and state not in ('ENTRY_REVIEW','EXIT_REVIEW','HOLD_REVIEW','NO_ACTION'):
+            raise DataError('Unknown advisory state')
+        if actionable not in (None,'true','false'):
+            raise DataError('Invalid actionable filter')
+        try:limit=int(query.get('limit',['100'])[0])
+        except (TypeError,ValueError):raise DataError('Invalid alert limit') from None
+        rows=self.alert_store.list_signals(ticker=ticker,strategy=strategy,
+            decision_state=state,actionable=None if actionable is None else actionable=='true',limit=limit)
+        if actionable != 'true' and state in (None,'NO_ACTION'):
+            existing={row['signal_id'] for row in rows}
+            for item in self.alert_store.list_suppressions(ticker=ticker,strategy=strategy,limit=limit):
+                if item['signal_id'] in existing:
+                    continue
+                rows.append(dict(signal_id=item['signal_id'],observation_id=item['observation_id'],
+                    ticker=item['ticker'],strategy=item['strategy'],timeframe=item['timeframe'],
+                    technical_side='SUPPRESSED',decision_state='NO_ACTION',effective_decision_state='NO_ACTION',
+                    lifecycle_state='SUPPRESSED',validation_state='SUPPRESSED',
+                    validation_reason=item['reason'],source='Phase 5A monitor validation',feed='iex',
+                    candle_date=item['candle_date'] or 'Unavailable',expires_at=None,
+                    expiry_policy_id='No review expiry; suppressed input',actionable=0,effective_actionable=False,
+                    effective_suppression_reason=item['reason'],created_at=item['observed_at']))
+            rows.sort(key=lambda row:(row.get('created_at',''),row.get('signal_id','')),reverse=True)
+            rows=rows[:limit]
+        now=datetime.now(timezone.utc)
+        try:
+            monitor=monitor_status(self.monitor_root,now)
+        except Exception:
+            monitor={'status':'ERROR','in_progress':True,'daily':[],'schedule':{}}
+        expected=(monitor.get('schedule') or {}).get('expected_candle')
+        by_ticker={r.get('ticker'):r for r in monitor.get('daily',[]) if isinstance(r,dict)}
+        for row in rows:
+            if row.get('lifecycle_state')=='SUPPRESSED':
+                row['effective_actionable']=False
+                row['effective_decision_state']='NO_ACTION'
+                row['effective_suppression_reason']=row.get('validation_reason')
+                continue
+            source=by_ticker.get(row['ticker'],{})
+            source_signal=next((s for s in source.get('signals',[]) if s.get('strategy')==row['strategy']),{})
+            eligible=(monitor.get('status') in ('RUNNING','DEGRADED') and not monitor.get('in_progress')
+                and source.get('status')=='VALIDATED' and source.get('candle')==expected==row['candle_date']
+                and source_signal.get('signal')==row['technical_side'].replace('NO_CROSS','NO CROSS'))
+            row['effective_actionable']=bool(row['actionable'] and eligible and row.get('expires_at') and now.isoformat()<row['expires_at'])
+            if not row['effective_actionable'] and row['actionable']:
+                row['effective_decision_state']='NO_ACTION'
+                row['effective_suppression_reason']='Current monitor data is stale, blocked, incomplete, or no longer matches this alert.'
+            else:
+                row['effective_decision_state']=row['decision_state']
+                row['effective_suppression_reason']=row.get('validation_reason')
+        return dict(alerts=rows,as_of=now.isoformat(),read_only=True,
+                    message='Advisory review states only. No order or wallet operation is available.')
+
+    def acknowledge_alert(self, body):
+        if self.alert_store is None:
+            raise DashboardBusy('Phase 5B alerts are not initialized')
+        if not isinstance(body,dict) or set(body)!={'signal_id','choice','key','actor'}:
+            raise DataError('Invalid acknowledgment request')
+        if not isinstance(body['signal_id'],str) or not re.fullmatch(r'[a-f0-9]{64}',body['signal_id']):
+            raise DataError('Invalid alert identity')
+        current=self.alert_store.list_signals(limit=200)
+        signal=next((r for r in current if r['signal_id']==body['signal_id']),None)
+        if signal is None:
+            raise DataError('Alert was not found')
+        view=self.alerts_view({'ticker':[signal['ticker']], 'strategy':[signal['strategy']], 'limit':['200']})
+        row=next((r for r in view['alerts'] if r['signal_id']==signal['signal_id']),None)
+        if not row or not row['effective_actionable']:
+            raise DataError('Current market data no longer permits acknowledgment')
+        return self.alert_store.acknowledge(body['signal_id'],choice=body['choice'],
+            key=body['key'],actor=body['actor'],now=datetime.now(timezone.utc))
+
 
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, format, *args):
@@ -467,7 +553,8 @@ class Handler(BaseHTTPRequestHandler):
         raw_path=urlsplit(self.path).path
         known={'/':'/','/api/session':'/api/session','/api/monitor':'/api/monitor',
                '/api/wallet':'/api/wallet','/api/reports':'/api/reports',
-               '/api/signals':'/api/signals','/api/coverage':'/api/coverage'}
+               '/api/signals':'/api/signals','/api/coverage':'/api/coverage',
+               '/api/alerts':'/api/alerts'}
         route=known.get(raw_path,'/api/reports/{id}' if raw_path.startswith('/api/reports/') else '/static-or-other')
         self._request_metrics={'route':route,'status':None,'serialization_ms':0.0,
                                'socket_write_ms':0.0,'client_disconnected':False,
@@ -504,6 +591,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send(200, dict(csrf=app.csrf,read_only=app.read_only))
             if path == '/api/monitor':
                 return self.send(200, monitor_status(app.monitor_root))
+            if path == '/api/alerts':
+                return self.send(200, app.alerts_view(parse_qs(urlsplit(self.path).query)))
             if path == '/api/wallet':
                 return self.send(200, wallet_view(app.wallet))
             if path == '/api/reports':
@@ -532,7 +621,7 @@ class Handler(BaseHTTPRequestHandler):
         started=time.monotonic_ns()
         accepted,thread_started=getattr(self.server,'request_clock',lambda _s:(started,started))(self.connection)
         raw_path=urlsplit(self.path).path
-        route=raw_path if raw_path in ('/api/funding/prepare','/api/funding/confirm') else '/api/other'
+        route=raw_path if raw_path in ('/api/funding/prepare','/api/funding/confirm','/api/alerts/ack') else '/api/other'
         self._request_metrics={'route':route,'status':None,'serialization_ms':0.0,
                                'socket_write_ms':0.0,'client_disconnected':False,
                                'accept_to_handler_ms':max(0,(started-accepted)/1_000_000),
@@ -546,8 +635,9 @@ class Handler(BaseHTTPRequestHandler):
         if not self.trusted_host():
             return self.send(403, {'error': 'Local Host required'})
         app = self.server.app
-        if app.read_only:
-            return self.send(403, {'error': 'Phase 5A is read only; all wallet writes are disabled.'})
+        path = urlsplit(self.path).path
+        if app.read_only and path != '/api/alerts/ack':
+            return self.send(403, {'error': 'Read-only service; wallet writes and execution are disabled.'})
         if self.headers.get('Origin') != 'http://' + self.headers['Host'] or not hmac.compare_digest(self.headers.get('X-CSRF-Token', '').encode(), app.csrf.encode()):
             return self.send(403, {'error': 'Same-origin confirmation required'})
         try:
@@ -558,6 +648,8 @@ class Handler(BaseHTTPRequestHandler):
                 raise WalletError('Invalid request size')
             body = strict_json(self.rfile.read(length))
             path = urlsplit(self.path).path
+            if path == '/api/alerts/ack':
+                return self.send(200, app.acknowledge_alert(body))
             if path == '/api/funding/prepare':
                 return self.send(200, app.prepare(body))
             if path == '/api/funding/confirm':
@@ -566,7 +658,7 @@ class Handler(BaseHTTPRequestHandler):
         except WalletError as exc:
             self.send(400, {'error': str(exc)})
         except (DataError, ValueError, TypeError):
-            self.send(400, {'error': 'Invalid funding request'})
+            self.send(400, {'error': 'Invalid read-only dashboard request'})
         except sqlite3.Error:
             self.send(503, {'error': 'Wallet unavailable; retry with the same idempotency key'})
 
@@ -644,7 +736,8 @@ def main():
     # Require an existing Phase 2 wallet: dashboard startup cannot invent a balance.
     if not DEFAULT_DB.is_file():
         parser.error('Initialize the persistent wallet explicitly with python -m dual_ma_ai init')
-    app = Dashboard(Wallet.open_existing(DEFAULT_DB),read_only=args.read_only)
+    app = Dashboard(Wallet.open_existing(DEFAULT_DB),read_only=args.read_only,
+                    alert_store=AlertStore(DEFAULT_ALERT_DB))
     logging.basicConfig(level=logging.INFO,format='%(asctime)s %(levelname)s %(name)s %(message)s')
     with make_server(app, args.port) as server:
         print(f'PAPER ONLY · http://127.0.0.1:{args.port} · Ctrl+C to stop', flush=True)

@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "calendar": "XNYS",
+  "policies": [
+    {"strategy": "SMA_50_200", "timeframe": "1Day", "session_ttl": 1},
+    {"strategy": "SMA_20_50", "timeframe": "1Day", "session_ttl": 1},
+    {"strategy": "EMA_20_50", "timeframe": "1Day", "session_ttl": 1}
+  ]
+}

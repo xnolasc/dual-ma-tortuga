@@ -6,6 +6,7 @@ import threading
 import time
 from datetime import datetime,timezone
 from dual_ma_ai.dashboard import Dashboard,make_server
+from dual_ma_ai.alert_store import AlertStore
 from dual_ma_ai.monitor import Store,schedule
 from dual_ma_ai.alpaca_data import daily_ready_at
 from dual_ma_ai.wallet import Wallet
@@ -25,7 +26,10 @@ if __name__ == '__main__':
                     daily=[dict(ticker='MU',status='VALIDATED',candle=day,signals=[dict(strategy=s,signal='NO CROSS',candle=day,usable_at=now.isoformat(),evaluated_at=now.isoformat(),explanation='Synthetic completed-candle fixture, read only.') for s in ('SMA_50_200','SMA_20_50','EMA_20_50')])]))
                 stop.wait(1)
         thread=threading.Thread(target=updates,daemon=True);thread.start()
-        app=Dashboard(Wallet(root/'wallet.sqlite3'),reports=root/'reports',cache=root/'alpha',alpaca_cache=root/'alpaca',monitor_root=store.root,read_only=True)
+        app=Dashboard(Wallet(root/'wallet.sqlite3'),reports=root/'reports',cache=root/'alpha',alpaca_cache=root/'alpaca',monitor_root=store.root,read_only=True,alert_store=AlertStore(root/'alerts.sqlite3'))
+        app.cached_catalog=lambda:dict(reports=[],warnings=[])
+        app.cached_signal_panel=lambda provider='alpaca',feed='iex':dict(rows=[],warnings=[],as_of='synthetic',warning='Synthetic monitor-only fixture.')
+        app.cached_coverage=lambda feed:dict(rows=[])
         try:
             with make_server(app,0) as server:
                 print(server.server_port,flush=True)

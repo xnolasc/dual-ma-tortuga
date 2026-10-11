@@ -7,6 +7,7 @@ import dual_ma_ai.dashboard as dashboard
 from dual_ma_ai.dashboard import Dashboard,make_server
 from dual_ma_ai.monitor import Store,schedule
 from dual_ma_ai.wallet import Wallet
+from dual_ma_ai.alert_store import AlertStore
 
 if __name__ == '__main__':
     with tempfile.TemporaryDirectory(prefix='dual-ma-dashboard-health-') as temp:
@@ -30,7 +31,7 @@ if __name__ == '__main__':
        time.sleep(float(os.environ['DASHBOARD_FIXTURE_DELAY_WALLET']))
        return original(wallet)
       dashboard.wallet_view=delayed_wallet_view
-     app=Dashboard(wallet,reports=root/'reports',cache=root/'alpha',alpaca_cache=root/'alpaca',monitor_root=state.root,read_only=True)
+     app=Dashboard(wallet,reports=root/'reports',cache=root/'alpha',alpaca_cache=root/'alpaca',monitor_root=state.root,read_only=True,alert_store=AlertStore(root/'alerts.sqlite3'))
      try:
       with make_server(app,0) as server:
        print(server.server_port,flush=True)

@@ -8,6 +8,7 @@ const child=spawn(path.join(root,'.venv/bin/python'),['-u','-c',`import tempfile
 from pathlib import Path
 from dual_ma_ai.dashboard import Dashboard, make_server
 from dual_ma_ai.wallet import Wallet
+from dual_ma_ai.alert_store import AlertStore
 from dual_ma_ai.market_data import strict_json
 import shutil
 with tempfile.TemporaryDirectory() as d:
@@ -20,7 +21,10 @@ with tempfile.TemporaryDirectory() as d:
    break
  else:
   raise RuntimeError('Full-horizon synthetic browser fixture required')
- with make_server(Dashboard(Wallet(Path(d)/'wallet.sqlite3'), reports=reports, alpaca_cache=Path(d)/'alpaca'), 0) as s:
+ app=Dashboard(Wallet(Path(d)/'wallet.sqlite3'), reports=reports, alpaca_cache=Path(d)/'alpaca', alert_store=AlertStore(Path(d)/'alerts.sqlite3'))
+ app.cached_signal_panel=lambda provider='alpaca',feed='iex':dict(rows=[dict(ticker='MU',status='UNAVAILABLE',warning='No temporary fixture data.')],warnings=[],as_of='synthetic',warning='Synthetic browser fixture.')
+ app.cached_coverage=lambda feed:dict(rows=[])
+ with make_server(app, 0) as s:
   print(s.server_port, flush=True)
   try: s.serve_forever()
   except KeyboardInterrupt: pass
