@@ -1,0 +1,290 @@
+{
+  "disposition": "PASS",
+  "mode": "READ_ONLY; PAPER execution disabled",
+  "launchagents": [
+    "local.dual-ma-ai.market-data",
+    "local.dual-ma-ai.dashboard"
+  ],
+  "dashboard_url": "http://127.0.0.1:8895",
+  "browser": {
+    "monitor_polls": 9,
+    "navigations": 1,
+    "failed_requests": [],
+    "console_errors": [],
+    "page_errors": [],
+    "health_states": [
+      "DEGRADED"
+    ],
+    "all_read_only": true,
+    "heartbeat_advanced": true
+  },
+  "worker_cycles": [
+    {
+      "health": "DEGRADED",
+      "daily_counts": {
+        "VALIDATED": 7,
+        "BLOCKED": 2
+      },
+      "blocked_symbols": {
+        "SPCX": [],
+        "AAOI": []
+      },
+      "phase": "idle",
+      "in_progress": false
+    },
+    {
+      "health": "DEGRADED",
+      "daily_counts": {
+        "VALIDATED": 7,
+        "BLOCKED": 2
+      },
+      "blocked_symbols": {
+        "SPCX": [],
+        "AAOI": []
+      },
+      "phase": "idle",
+      "in_progress": false
+    },
+    {
+      "health": "DEGRADED",
+      "daily_counts": {
+        "VALIDATED": 7,
+        "BLOCKED": 2
+      },
+      "blocked_symbols": {
+        "SPCX": [],
+        "AAOI": []
+      },
+      "phase": "idle",
+      "in_progress": false
+    }
+  ],
+  "worker_cycles_observer_note": "Three cycle observations were printed successfully. Initial summary writer then raised TypeError because flush was passed to json.dumps; data was reconstructed from the three observed outputs and independently checked against current durable state.",
+  "concurrency_runs": [
+    {
+      "elapsed_seconds": 4.845,
+      "request_count": 60,
+      "all_http_200": true,
+      "errors": [],
+      "monitor": {
+        "count": 48,
+        "p95_ms": 693.518,
+        "max_ms": 704.385
+      },
+      "research": {
+        "/api/reports": {
+          "count": 4,
+          "statuses": [
+            200,
+            200,
+            200,
+            200
+          ],
+          "latency_ms": [
+            4822.247,
+            4805.573,
+            4820.717,
+            4817.531
+          ]
+        },
+        "/api/signals": {
+          "count": 4,
+          "statuses": [
+            200,
+            200,
+            200,
+            200
+          ],
+          "latency_ms": [
+            2970.177,
+            2967.179,
+            2947.208,
+            2966.883
+          ]
+        },
+        "/api/coverage": {
+          "count": 4,
+          "statuses": [
+            200,
+            200,
+            200,
+            200
+          ],
+          "latency_ms": [
+            610.839,
+            657.375,
+            388.66,
+            403.846
+          ]
+        }
+      },
+      "monitor_latencies_ms": [
+        225.142,
+        350.906,
+        537.338,
+        247.231,
+        625.467,
+        373.774,
+        601.892,
+        668.938,
+        567.472,
+        704.385,
+        318.038,
+        608.553,
+        691.703,
+        454.35,
+        600.074,
+        505.254,
+        490.626,
+        366.366,
+        641.38,
+        693.518,
+        342.439,
+        313.444,
+        591.285,
+        694.778,
+        687.912,
+        308.033,
+        430.869,
+        557.867,
+        653.787,
+        334.72,
+        214.748,
+        406.484,
+        556.74,
+        639.511,
+        686.196,
+        423.045,
+        263.989,
+        259.219,
+        698.054,
+        445.139,
+        280.198,
+        382.61,
+        311.909,
+        207.743,
+        244.784,
+        637.868,
+        460.527,
+        519.591
+      ]
+    },
+    {
+      "elapsed_seconds": 4.733,
+      "request_count": 60,
+      "all_http_200": true,
+      "errors": 0,
+      "monitor": {
+        "count": 48,
+        "p95_ms": 611.629,
+        "max_ms": 623.884
+      },
+      "research": {
+        "/api/reports": {
+          "count": 4,
+          "statuses": [
+            200,
+            200,
+            200,
+            200
+          ],
+          "max_ms": 4714.348
+        },
+        "/api/signals": {
+          "count": 4,
+          "statuses": [
+            200,
+            200,
+            200,
+            200
+          ],
+          "max_ms": 2951.501
+        },
+        "/api/coverage": {
+          "count": 4,
+          "statuses": [
+            200,
+            200,
+            200,
+            200
+          ],
+          "max_ms": 575.797
+        }
+      },
+      "blocked_tickers": {
+        "SPCX": {
+          "status": "UNAVAILABLE",
+          "strategies": 0
+        },
+        "AAOI": {
+          "status": "UNAVAILABLE",
+          "strategies": 0
+        }
+      },
+      "monitor_latencies_ms": [
+        280.863,
+        304.288,
+        291.638,
+        598.572,
+        390.882,
+        299.728,
+        475.885,
+        262.329,
+        454.781,
+        600.041,
+        535.258,
+        327.766,
+        351.497,
+        436.04,
+        338.196,
+        443.639,
+        396.583,
+        620.369,
+        459.475,
+        623.884,
+        460.46,
+        297.315,
+        523.969,
+        258.101,
+        515.332,
+        563.419,
+        494.286,
+        591.174,
+        583.733,
+        360.442,
+        493.368,
+        466.042,
+        577.822,
+        414.984,
+        465.331,
+        611.629,
+        418.911,
+        256.258,
+        267.41,
+        604.501,
+        558.952,
+        258.261,
+        264.434,
+        340.315,
+        310.091,
+        417.118,
+        621.06,
+        524.52
+      ]
+    }
+  ],
+  "event_ledger": {
+    "all_ids_unique": true
+  },
+  "wallet": {
+    "matches_pre_activation_baseline": true,
+    "audit_history_matches_pre_activation_baseline": true,
+    "trading_activity_introduced": false,
+    "sqlite_integrity": "ok"
+  },
+  "protected_artifacts": {
+    "expected_count": 254,
+    "changed_or_missing": []
+  },
+  "legacy_parity": "21 tests passed before activation; original frozen LEGACY sources included in protected artifact checks"
+}

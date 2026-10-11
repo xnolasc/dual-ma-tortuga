@@ -13,3 +13,12 @@ __pycache__/
 ledger_*.json
 dualma_state.json
 dualma_trades.json
+
+# Independent Dual MA AI runtime wallet (paper only)
+/data/dual_ma_ai/
+/.venv/
+
+# Machine-specific generated LaunchAgents and test captures
+/launchd/*.plist
+/tmp/
+/docs/dual-ma-ai-*.png

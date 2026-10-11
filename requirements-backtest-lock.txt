@@ -1,0 +1,9 @@
+exchange_calendars==4.13.2
+korean_lunar_calendar==0.4.0
+numpy==2.5.4
+pandas==3.0.6
+pyluach==2.3.0
+python-dateutil==2.9.0.post0
+six==1.17.0
+toolz==1.2.0
+tzdata==2026.5
